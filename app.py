@@ -2,8 +2,13 @@ import streamlit as st
 import os
 import re
 import math
+import requests
 import speech_recognition as sr
+from audio_recorder_streamlit import audio_recorder  # New live recording component
 
+# =====================================================================
+# 1. NAIVE BAYES ENGINE
+# =====================================================================
 TRAINING_DATA = [
     ("This is the IRS, you owe back taxes and will be arrested", "scam"),
     ("Your bank account is compromised, send money to the secure vault", "scam"),
@@ -58,7 +63,6 @@ class NaiveBayesScamDetector:
     def predict(self, text):
         words = self._tokenize(text)
         total_docs = self.num_scam_docs + self.num_safe_docs
-        
         if total_docs == 0:
             return "safe", 0.5
             
@@ -95,48 +99,77 @@ def get_trained_detector():
 
 detector = get_trained_detector()
 
+# =====================================================================
+# 2. STREAMLIT WEB UI INTERFACE
+# =====================================================================
 st.set_page_config(page_title="Scam Shield", page_icon="🛡️", layout="centered")
+
 st.title("🛡️ Scam Shield Portal")
 st.write("A privacy-first, zero-cloud detection system protecting vulnerable individuals from telephone fraud.")
 
-tab1, tab2 = st.tabs(["🎙️ Audio File Analysis", "✍️ Manual Text / SMS Analysis"])
+# Sidebar Settings
+st.sidebar.header("🛡️ Settings")
+webhook_input = st.sidebar.text_input(
+    "Caregiver Webhook (Optional)",
+    type="password"
+)
 
+tab1, tab2 = st.tabs(["🎙️ Speak Live on Mobile", "✍️ Manual Text / SMS Analysis"])
+
+# --- TAB 1: LIVE VOICE MICROPHONE RECORDING ---
 with tab1:
-    st.header("Analyze Call Audio")
-    uploaded_file = st.file_uploader("Choose a WAV file", type=["wav"])
+    st.header("Speak Live")
+    st.write("Tap the microphone icon below, speak into your device, and tap it again to stop.")
     
-    if uploaded_file is not None:
-        temp_filename = "temp_uploaded_call.wav"
+    # Renders an interactive microphone button on the screen (works on Android/iOS browsers)
+    audio_bytes = audio_recorder(
+        text="Click to record speech",
+        recording_color="#e75757",
+        neutral_color="#34a853",
+        icon_size="3x"
+    )
+    
+    if audio_bytes:
+        # Create a temporary file in memory to write the captured audio bytes
+        temp_filename = "temp_mobile_recording.wav"
         with open(temp_filename, "wb") as f:
-            f.write(uploaded_file.getbuffer())
+            f.write(audio_bytes)
             
-        st.audio(uploaded_file, format="audio/wav")
+        st.audio(audio_bytes, format="audio/wav")
         
-        with st.spinner("Processing speech-to-text..."):
+        with st.spinner("Analyzing audio..."):
             recognizer = sr.Recognizer()
             try:
                 with sr.AudioFile(temp_filename) as source:
-                    audio_data = recognizer.record(source)
-                    transcribed_text = recognizer.recognize_google(audio_data)
+                    audio_record = recognizer.record(source)
+                    transcribed_text = recognizer.recognize_google(audio_record)
                     
-                st.success("Transcription Complete!")
-                st.text_area("Intercepted Transcript:", value=transcribed_text, height=100, disabled=True)
+                st.success("Analysis Complete!")
+                st.info(f"**Heard:** \"{transcribed_text}\"")
                 
+                # Predict
                 classification, confidence = detector.predict(transcribed_text)
+                
                 if classification == "scam" and confidence > 0.60:
-                    st.error(f"⚠️ HIGH SCAM RISK DETECTED ({confidence:.2%})")
-                    st.warning("ACTION ADVISED: Hang up immediately.")
+                    st.error(f"🚨 HIGH SCAM RISK FLAGGED ({confidence:.2%})")
+                    st.warning("**ACTION REQUIRED:** Hang up the phone immediately. This caller exhibits financial exploitation tactics.")
                 else:
-                    st.success(f"✅ Call segment appears safe ({confidence:.2%} confidence)")
+                    st.success(f"🟢 Call segment appears safe ({confidence:.2%} confidence)")
+                    
+            except sr.UnknownValueError:
+                st.error("Could not recognize speech. Please tap, speak clearly, and tap again.")
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.error(f"Error during audio analysis: {e}")
             finally:
                 if os.path.exists(temp_filename):
                     os.remove(temp_filename)
 
+# --- TAB 2: MANUAL TEXT ANALYSIS ---
 with tab2:
     st.header("Analyze Text Messages")
+    st.write("Type or paste a suspicious SMS below:")
     user_input = st.text_area("Input message here:")
+    
     if st.button("Run Text Analysis"):
         if user_input.strip() != "":
             classification, confidence = detector.predict(user_input)

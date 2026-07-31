@@ -1,2 +1,3 @@
 streamlit
 SpeechRecognition
+audio-recorder-streamlit
